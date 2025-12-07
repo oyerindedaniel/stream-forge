@@ -1,0 +1,50 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "tsx watch src/index.ts",
+    "dev:worker": "tsx watch src/worker-entry.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:worker": "node dist/worker-entry.js",
+    "typecheck": "tsc --noEmit",
+    "load-test": "tsx tests/load-test.ts",
+    "load-test:upload": "tsx tests/load-test-upload.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.946.0",
+    "@aws-sdk/lib-storage": "^3.946.0",
+    "@aws-sdk/s3-request-presigner": "^3.946.0",
+    "@fastify/cors": "^11.1.0",
+    "@fastify/static": "^8.3.0",
+    "@fastify/websocket": "^11.2.0",
+    "bullmq": "^5.65.1",
+    "dotenv": "^17.2.3",
+    "fastify": "^5.6.2",
+    "fluent-ffmpeg": "^2.1.3",
+    "ioredis": "^5.8.2",
+    "mp4box": "^2.3.0",
+    "node-fetch": "2",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/autocannon": "^7.12.7",
+    "@types/fluent-ffmpeg": "^2.1.28",
+    "@types/node": "^24.10.1",
+    "@types/node-fetch": "^2.6.13",
+    "@types/pg": "^8.15.6",
+    "artillery": "^2.0.27",
+    "autocannon": "^8.0.0",
+    "clinic": "^13.0.0",
+    "drizzle-kit": "^0.31.8",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

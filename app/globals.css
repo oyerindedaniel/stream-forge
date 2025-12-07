@@ -1,26 +1,75 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
+@theme {
+  /* HSL-like variables but using OKLCH for better perceptual uniformity */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  /* Light Mode */
+  /* Pure white background */
+  --background: oklch(100% 0 0);
+  /* Subtle gray foreground (not pitch black) */
+  --foreground: oklch(32% 0.01 260);
+
+  /* Subtle Red Primary - "not heart blood red" - distinct but not aggressive */
+  --primary: oklch(55% 0.15 20);
+  --primary-foreground: oklch(100% 0 0);
+
+  /* Subtle grays */
+  --muted: oklch(96% 0.005 260);
+  --muted-foreground: oklch(55% 0.01 260);
+
+  --border: oklch(92% 0.005 260);
+  --input: oklch(92% 0.005 260);
+  --ring: oklch(55% 0.15 20 / 0.2);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* Dark Mode */
+    /* "Close to black not gray but not full black" */
+    --background: oklch(12% 0.01 260);
+    /* "Brighten it up a bit for dark" */
+    --foreground: oklch(92% 0.005 260);
+
+    /* Primary persists */
+    --primary: oklch(60% 0.15 20);
+    --primary-foreground: oklch(100% 0 0);
+
+    /* Dark mode subtle grays */
+    --muted: oklch(18% 0.01 260);
+    --muted-foreground: oklch(70% 0.01 260);
+
+    --border: oklch(22% 0.01 260);
+    --input: oklch(22% 0.01 260);
+    --ring: oklch(60% 0.15 20 / 0.2);
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Base utility for smooth transitions if needed, though often better on components */
+* {
+  border-color: var(--border);
 }
