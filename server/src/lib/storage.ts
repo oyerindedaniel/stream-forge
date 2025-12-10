@@ -7,6 +7,7 @@ import {
   CreateMultipartUploadCommand,
   AbortMultipartUploadCommand,
   ChecksumAlgorithm,
+  ListMultipartUploadsCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Upload } from "@aws-sdk/lib-storage";
@@ -20,6 +21,7 @@ import {
   isS3Configured,
   CDN_URL,
 } from "./constants";
+import { get } from "https";
 
 const s3 = new S3Client({
   region: AWS_REGION,
@@ -144,6 +146,14 @@ export const storage = {
     const response = await s3.send(command);
     const str = await response.Body?.transformToString();
     return JSON.parse(str || "{}");
+  },
+
+  async getMultipartUploads() {
+    const listCommand = new ListMultipartUploadsCommand({
+      Bucket: storage.bucketName,
+    });
+
+    return await storage.s3Client.send(listCommand);
   },
 
   async createMultipartUpload(

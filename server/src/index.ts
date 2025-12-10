@@ -13,15 +13,15 @@ import { healthRoutes } from "./modules/health/routes";
 import { redisPrimary, redisRate } from "./lib/redis";
 import { rateLimitConfigs } from "./lib/rate-limiter";
 import { CORS_ORIGIN } from "./lib/constants";
-import { logger } from "./lib/monitoring";
 
 const fastify = Fastify({
-  logger,
+  logger: true,
 });
 
 fastify.register(cors, {
   origin: CORS_ORIGIN,
   credentials: true,
+  methods: ["GET", "POST", "DELETE", "PUT", "OPTIONS"],
 });
 
 fastify.register(fastifyStatic, {

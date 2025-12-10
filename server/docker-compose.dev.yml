@@ -56,7 +56,7 @@ services:
       - /app/node_modules
       - /app/dist
       - ./tmp:/app/tmp
-    command: pnpm dev
+    command: sh -c "pnpm db:migrate && pnpm dev"
     stdin_open: true
     tty: true
 

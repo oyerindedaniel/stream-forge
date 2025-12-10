@@ -3,6 +3,7 @@ import { db } from "../../db";
 import { videos } from "../../db/schema";
 import { desc, eq } from "drizzle-orm";
 import { storage } from "../../lib/storage";
+import { S3Keys } from "../../lib/s3-keys";
 
 export async function videoRoutes(fastify: FastifyInstance) {
   fastify.get("/", async (request, reply) => {
@@ -37,5 +38,59 @@ export async function videoRoutes(fastify: FastifyInstance) {
     }
 
     return video;
+  });
+
+  fastify.get("/:id/status", async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const video = await db
+      .select()
+      .from(videos)
+      .where(eq(videos.id, id))
+      .limit(1);
+
+    if (!video || video.length === 0) {
+      return reply.status(404).send({ error: "Video not found" });
+    }
+
+    return {
+      videoId: video[0].id,
+      status: video[0].status,
+      title: video[0].title,
+    };
+  });
+
+  fastify.delete("/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    console.log(id);
+
+    const video = await db
+      .select()
+      .from(videos)
+      .where(eq(videos.id, id))
+      .limit(1);
+    if (!video || video.length === 0) {
+      return reply.status(404).send({ error: "Video not found" });
+    }
+
+    if (video[0].sourceUrl) {
+      const s3Key = S3Keys.parseS3Url(video[0].sourceUrl, storage.bucketName);
+
+      if (await storage.fileExists(s3Key)) {
+        await storage.deleteFile(s3Key);
+      }
+    }
+
+    await db
+      .update(videos)
+      .set({
+        status: "deleted",
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(videos.id, id));
+
+    return { success: true };
   });
 }

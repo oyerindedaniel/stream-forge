@@ -18,9 +18,6 @@ interface SocketContextType {
   subscribeToUpload: (uploadId: string) => void;
   unsubscribeFromUpload: (uploadId: string) => void;
   onVideoStatus: (callback: (event: VideoStatusEvent) => void) => () => void;
-  onUploadProgress: (
-    callback: (event: UploadProgressEvent) => void
-  ) => () => void;
 }
 
 export type VideoStatus =
@@ -35,13 +32,6 @@ export type VideoStatus =
 export interface VideoStatusEvent {
   videoId: string;
   status: VideoStatus;
-  error?: string;
-}
-
-export interface UploadProgressEvent {
-  uploadId: string;
-  status: string;
-  progress?: number;
   error?: string;
 }
 
@@ -114,16 +104,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     };
   };
 
-  const onUploadProgress = (callback: (event: UploadProgressEvent) => void) => {
-    if (!socket) return () => {};
-
-    socket.on("upload:progress", callback);
-
-    return () => {
-      socket.off("upload:progress", callback);
-    };
-  };
-
   return (
     <SocketContext.Provider
       value={{
@@ -134,7 +114,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         subscribeToUpload,
         unsubscribeFromUpload,
         onVideoStatus,
-        onUploadProgress,
       }}
     >
       {children}

@@ -23,7 +23,7 @@ async function fetchVideos(): Promise<{ videos: Video[] }> {
 }
 
 async function deleteVideo(videoId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/v1/uploads/${videoId}`, {
+  const res = await fetch(`${API_URL}/api/v1/videos/${videoId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete video");

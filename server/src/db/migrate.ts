@@ -8,7 +8,10 @@ import { DATABASE_URL } from "../lib/constants";
 
 async function runMigrations() {
   console.log("[Migrate] Starting database migrations...");
-  console.log("[Migrate] Database URL:", DATABASE_URL?.substring(0, 5) + "...");
+  console.log(
+    "[Migrate] Database URL:",
+    DATABASE_URL?.substring(0, 12) + "..."
+  );
 
   const pool = new Pool({
     connectionString: DATABASE_URL,

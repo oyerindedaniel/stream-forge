@@ -1,4 +1,5 @@
 "use client";
+
 import { useState, useRef } from "react";
 import { API_URL } from "@/app/lib/constants";
 import { UPLOAD_CHUNK_SIZE } from "@/app/lib/constants";
@@ -6,15 +7,25 @@ import { createSHA256 } from "hash-wasm";
 import { STORAGE_KEY } from "@/app/lib/constants";
 
 export function Uploader() {
-  const [uploads, setUploads] = useState<Record<string, UploadProgress>>(() => {
+  const [uploadSessions, setUploadSessions] = useState<
+    Record<string, UploadSession>
+  >(() => {
     if (typeof window === "undefined") return {};
     const saved = window.localStorage.getItem(STORAGE_KEY);
     if (!saved) return {};
+
     try {
       const sessions = JSON.parse(saved) as Record<string, SavedSession>;
-      const restored: Record<string, UploadProgress> = {};
+      const restored: Record<string, UploadSession> = {};
+      const now = Date.now();
+
       Object.values(sessions).forEach((session) => {
         if (session.status === "uploading" || session.status === "paused") {
+          if (session.urlsExpiresAt) {
+            const expiresAt = new Date(session.urlsExpiresAt).getTime();
+            if (now >= expiresAt) return;
+          }
+
           restored[session.uploadId] = {
             ...session,
             status: "paused",
@@ -22,6 +33,7 @@ export function Uploader() {
           };
         }
       });
+
       return restored;
     } catch {
       return {};
@@ -29,17 +41,26 @@ export function Uploader() {
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const uploadSessionsRef = useRef<Record<string, UploadSession>>({});
-  const uploadsPausedRef = useRef<Record<string, boolean>>({});
+
+  const uploadSessionsRef =
+    useRef<Record<string, UploadSession>>(uploadSessions);
+
+  const uploadsPausedRef = useRef<Record<string, boolean>>(
+    Object.fromEntries(
+      Object.entries(uploadSessions)
+        .filter(([_, session]) => session.status === "paused")
+        .map(([id, _]) => [id, true])
+    )
+  );
   const abortControllersRef = useRef<Record<string, AbortController>>({});
 
-  const saveSessions = (currentUploads: Record<string, UploadProgress>) => {
+  const saveSessions = (currentSessions: Record<string, UploadSession>) => {
     const toSave = Object.fromEntries(
-      Object.entries(currentUploads).map(([id, upload]) => [
+      Object.entries(currentSessions).map(([id, session]) => [
         id,
         {
-          ...upload,
-          uploadedChunks: Array.from(upload.uploadedChunks),
+          ...session,
+          uploadedChunks: Array.from(session.uploadedChunks),
         },
       ])
     );
@@ -64,7 +85,7 @@ export function Uploader() {
 
     abortControllersRef.current[tempId] = new AbortController();
 
-    const initialProgress: UploadProgress = {
+    const initialSession: UploadSession = {
       uploadId: tempId,
       filename: file.name,
       progress: 0,
@@ -74,8 +95,10 @@ export function Uploader() {
       uploadedChunks: new Set(),
     };
 
-    setUploads((prev) => {
-      const updated = { ...prev, [tempId]: initialProgress };
+    uploadSessionsRef.current[tempId] = initialSession;
+
+    setUploadSessions((prev) => {
+      const updated = { ...prev, [tempId]: initialSession };
       saveSessions(updated);
       return updated;
     });
@@ -105,9 +128,10 @@ export function Uploader() {
       if (initData.type === "multipart") {
         const totalChunks = initData.partUrls.length;
 
-        uploadSessionsRef.current[tempId] = {
-          type: "multipart",
+        const updatedSession: UploadSession = {
+          ...uploadSessionsRef.current[tempId],
           uploadId: initData.uploadId,
+          type: "multipart",
           multipartUploadId: initData.multipartUploadId,
           partUrls: initData.partUrls,
           totalChunks,
@@ -115,37 +139,28 @@ export function Uploader() {
           urlsExpiresAt: initData.expiresAt,
         };
 
-        setUploads((prev) => {
-          const updated = {
-            ...prev,
-            [tempId]: {
-              ...prev[tempId],
-              uploadId: initData.uploadId,
-              sessionId: initData.multipartUploadId,
-              urlsExpiresAt: initData.expiresAt,
-            },
-          };
+        uploadSessionsRef.current[tempId] = updatedSession;
+
+        setUploadSessions((prev) => {
+          const updated = { ...prev, [tempId]: updatedSession };
           saveSessions(updated);
           return updated;
         });
 
         await uploadChunked(tempId, file, initData.partUrls, initData.partSize);
       } else {
-        uploadSessionsRef.current[tempId] = {
-          type: "single",
+        const updatedSession: UploadSession = {
+          ...uploadSessionsRef.current[tempId],
           uploadId: initData.uploadId,
+          type: "single",
           uploadUrl: initData.uploadUrl,
           totalChunks: 1,
         };
 
-        setUploads((prev) => {
-          const updated = {
-            ...prev,
-            [tempId]: {
-              ...prev[tempId],
-              uploadId: initData.uploadId,
-            },
-          };
+        uploadSessionsRef.current[tempId] = updatedSession;
+
+        setUploadSessions((prev) => {
+          const updated = { ...prev, [tempId]: updatedSession };
           saveSessions(updated);
           return updated;
         });
@@ -160,17 +175,16 @@ export function Uploader() {
       } = {};
 
       if (
-        initData.type === "multipart" &&
-        initData.multipartUploadId &&
         session.type === "multipart" &&
+        session.multipartUploadId &&
         session.uploadedParts
       ) {
-        completeBody.multipartUploadId = initData.multipartUploadId;
+        completeBody.multipartUploadId = session.multipartUploadId;
         completeBody.parts = session.uploadedParts;
       }
 
       const completeResponse = await fetch(
-        `${API_URL}/api/v1/uploads/${initData.uploadId}/complete`,
+        `${API_URL}/api/v1/uploads/${session.uploadId}/complete`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -182,18 +196,22 @@ export function Uploader() {
         throw new Error("Failed to complete upload");
       }
 
-      setUploads((prev) => {
-        const updated = {
-          ...prev,
-          [tempId]: {
-            ...prev[tempId],
-            status: "complete" as UploadStatus,
-            progress: 100,
-          },
-        };
+      const completedSession: UploadSession = {
+        ...uploadSessionsRef.current[tempId],
+        status: "complete",
+        progress: 100,
+      };
+
+      uploadSessionsRef.current[tempId] = completedSession;
+
+      setUploadSessions((prev) => {
+        const updated = { ...prev, [tempId]: completedSession };
         saveSessions(updated);
         return updated;
       });
+
+      delete uploadSessionsRef.current[tempId];
+      delete uploadsPausedRef.current[tempId];
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         console.log("Upload cancelled by user");
@@ -201,15 +219,17 @@ export function Uploader() {
       }
 
       console.error("Upload error:", error);
-      setUploads((prev) => {
-        const updated = {
-          ...prev,
-          [tempId]: {
-            ...prev[tempId],
-            status: "error" as UploadStatus,
-            error: error instanceof Error ? error.message : "Upload failed",
-          },
-        };
+
+      const errorSession: UploadSession = {
+        ...uploadSessionsRef.current[tempId],
+        status: "error",
+        error: error instanceof Error ? error.message : "Upload failed",
+      };
+
+      uploadSessionsRef.current[tempId] = errorSession;
+
+      setUploadSessions((prev) => {
+        const updated = { ...prev, [tempId]: errorSession };
         saveSessions(updated);
         return updated;
       });
@@ -224,11 +244,10 @@ export function Uploader() {
     partUrls: string[],
     chunkSize: number
   ) => {
-    const uploadState = uploads[tempId];
     const uploadedParts: UploadedParts = [];
 
     const session = uploadSessionsRef.current[tempId];
-    if (session.type !== "multipart") {
+    if (!session.type || session.type !== "multipart") {
       console.error(`Session type is "${session.type}", expected "multipart"`);
       return;
     }
@@ -243,7 +262,7 @@ export function Uploader() {
         return;
       }
 
-      if (uploadState.uploadedChunks.has(i)) {
+      if (uploadSessionsRef.current[tempId]?.uploadedChunks.has(i)) {
         continue;
       }
 
@@ -274,7 +293,7 @@ export function Uploader() {
             ETag: etag.replace(/"/g, ""),
           });
 
-          setUploads((prev) => {
+          setUploadSessions((prev) => {
             const newChunks = new Set(prev[tempId].uploadedChunks);
             newChunks.add(i);
             const uploadedBytes = Array.from(newChunks).reduce((sum, idx) => {
@@ -283,15 +302,16 @@ export function Uploader() {
               return sum + (chunkEnd - chunkStart);
             }, 0);
 
-            const updated = {
-              ...prev,
-              [tempId]: {
-                ...prev[tempId],
-                uploadedChunks: newChunks,
-                uploadedBytes,
-                progress: (uploadedBytes / file.size) * 100,
-              },
+            const updatedSession: UploadSession = {
+              ...prev[tempId],
+              uploadedChunks: newChunks,
+              uploadedBytes,
+              progress: (uploadedBytes / file.size) * 100,
             };
+
+            uploadSessionsRef.current[tempId] = updatedSession;
+
+            const updated = { ...prev, [tempId]: updatedSession };
             saveSessions(updated);
             return updated;
           });
@@ -311,7 +331,7 @@ export function Uploader() {
       }
     }
 
-    session.uploadedParts = uploadedParts;
+    uploadSessionsRef.current[tempId].uploadedParts = uploadedParts;
   };
 
   const uploadDirect = async (
@@ -324,15 +344,16 @@ export function Uploader() {
 
       xhr.upload.addEventListener("progress", (e) => {
         if (e.lengthComputable) {
-          setUploads((prev) => {
-            const updated = {
-              ...prev,
-              [tempId]: {
-                ...prev[tempId],
-                progress: (e.loaded / e.total) * 100,
-                uploadedBytes: e.loaded,
-              },
+          setUploadSessions((prev) => {
+            const updatedSession: UploadSession = {
+              ...prev[tempId],
+              progress: (e.loaded / e.total) * 100,
+              uploadedBytes: e.loaded,
             };
+
+            uploadSessionsRef.current[tempId] = updatedSession;
+
+            const updated = { ...prev, [tempId]: updatedSession };
             saveSessions(updated);
             return updated;
           });
@@ -356,11 +377,16 @@ export function Uploader() {
 
   const pauseUpload = (tempId: string) => {
     uploadsPausedRef.current[tempId] = true;
-    setUploads((prev) => {
-      const updated = {
-        ...prev,
-        [tempId]: { ...prev[tempId], status: "paused" as UploadStatus },
-      };
+
+    const pausedSession: UploadSession = {
+      ...uploadSessionsRef.current[tempId],
+      status: "paused",
+    };
+
+    uploadSessionsRef.current[tempId] = pausedSession;
+
+    setUploadSessions((prev) => {
+      const updated = { ...prev, [tempId]: pausedSession };
       saveSessions(updated);
       return updated;
     });
@@ -369,7 +395,7 @@ export function Uploader() {
   const resumeUpload = async (tempId: string) => {
     uploadsPausedRef.current[tempId] = false;
     abortControllersRef.current[tempId] = new AbortController();
-    const upload = uploads[tempId];
+    const session = uploadSessions[tempId];
 
     const input = document.createElement("input");
     input.type = "file";
@@ -377,39 +403,46 @@ export function Uploader() {
     input.onchange = async (e: Event) => {
       const target = e.target as HTMLInputElement;
       const file = target.files?.[0];
-      if (!file || file.name !== upload.filename) {
+      if (!file || file.name !== session.filename) {
         return;
       }
 
-      setUploads((prev) => ({
+      const uploadingSession: UploadSession = {
+        ...uploadSessionsRef.current[tempId],
+        status: "uploading",
+      };
+
+      uploadSessionsRef.current[tempId] = uploadingSession;
+
+      setUploadSessions((prev) => ({
         ...prev,
-        [tempId]: { ...prev[tempId], status: "uploading" as UploadStatus },
+        [tempId]: uploadingSession,
       }));
 
       try {
-        const session = uploadSessionsRef.current[tempId];
-        if (!session) {
+        const sessionRef = uploadSessionsRef.current[tempId];
+        if (!sessionRef) {
           throw new Error("Upload session not found");
         }
 
-        if (session.type === "multipart" && session.multipartUploadId) {
+        if (sessionRef.type === "multipart" && sessionRef.multipartUploadId) {
           const now = new Date().getTime();
-          const expiresAt = session.urlsExpiresAt
-            ? new Date(session.urlsExpiresAt).getTime()
+          const expiresAt = sessionRef.urlsExpiresAt
+            ? new Date(sessionRef.urlsExpiresAt).getTime()
             : 0;
-          const urlsExpired = !session.urlsExpiresAt || now >= expiresAt;
+          const urlsExpired = !sessionRef.urlsExpiresAt || now >= expiresAt;
 
-          let partUrls = session.partUrls;
+          let partUrls = sessionRef.partUrls || [];
           let partSize = UPLOAD_CHUNK_SIZE;
 
           if (urlsExpired) {
             const refreshResponse = await fetch(
-              `${API_URL}/api/v1/uploads/${session.uploadId}/refresh-urls`,
+              `${API_URL}/api/v1/uploads/${sessionRef.uploadId}/refresh-urls`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  multipartUploadId: session.multipartUploadId,
+                  multipartUploadId: sessionRef.multipartUploadId,
                 }),
               }
             );
@@ -422,17 +455,16 @@ export function Uploader() {
             partUrls = refreshData.partUrls;
             partSize = refreshData.partSize;
 
-            session.partUrls = partUrls;
-            session.urlsExpiresAt = refreshData.expiresAt;
+            const refreshedSession: UploadSession = {
+              ...uploadSessionsRef.current[tempId],
+              partUrls,
+              urlsExpiresAt: refreshData.expiresAt,
+            };
 
-            setUploads((prev) => {
-              const updated = {
-                ...prev,
-                [tempId]: {
-                  ...prev[tempId],
-                  urlsExpiresAt: refreshData.expiresAt,
-                },
-              };
+            uploadSessionsRef.current[tempId] = refreshedSession;
+
+            setUploadSessions((prev) => {
+              const updated = { ...prev, [tempId]: refreshedSession };
               saveSessions(updated);
               return updated;
             });
@@ -450,13 +482,14 @@ export function Uploader() {
           parts?: UploadedParts;
         } = {};
 
-        if (session.multipartUploadId && session.uploadedParts) {
-          completeBody.multipartUploadId = session.multipartUploadId;
-          completeBody.parts = session.uploadedParts;
+        const finalSession = uploadSessionsRef.current[tempId];
+        if (finalSession.multipartUploadId && finalSession.uploadedParts) {
+          completeBody.multipartUploadId = finalSession.multipartUploadId;
+          completeBody.parts = finalSession.uploadedParts;
         }
 
         const completeResponse = await fetch(
-          `${API_URL}/api/v1/uploads/${session.uploadId}/complete`,
+          `${API_URL}/api/v1/uploads/${finalSession.uploadId}/complete`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -468,23 +501,32 @@ export function Uploader() {
           throw new Error("Failed to complete upload");
         }
 
-        setUploads((prev) => ({
+        const processingSession: UploadSession = {
+          ...uploadSessionsRef.current[tempId],
+          status: "complete",
+          progress: 100,
+        };
+
+        uploadSessionsRef.current[tempId] = processingSession;
+
+        setUploadSessions((prev) => ({
           ...prev,
-          [tempId]: {
-            ...prev[tempId],
-            status: "processing" as UploadStatus,
-            progress: 100,
-          },
+          [tempId]: processingSession,
         }));
       } catch (error) {
         console.error("Resume error:", error);
-        setUploads((prev) => ({
+
+        const errorSession: UploadSession = {
+          ...uploadSessionsRef.current[tempId],
+          status: "error",
+          error: error instanceof Error ? error.message : "Resume failed",
+        };
+
+        uploadSessionsRef.current[tempId] = errorSession;
+
+        setUploadSessions((prev) => ({
           ...prev,
-          [tempId]: {
-            ...prev[tempId],
-            status: "error" as UploadStatus,
-            error: error instanceof Error ? error.message : "Resume failed",
-          },
+          [tempId]: errorSession,
         }));
       }
     };
@@ -514,7 +556,7 @@ export function Uploader() {
       }
     }
 
-    setUploads((prev) => {
+    setUploadSessions((prev) => {
       const { [tempId]: removed, ...rest } = prev;
       saveSessions(rest);
       return rest;
@@ -525,9 +567,9 @@ export function Uploader() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 p-6">
       <div
-        className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-primary transition-colors"
+        className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 transition-colors"
         onClick={() => fileInputRef.current?.click()}
       >
         <input
@@ -539,7 +581,7 @@ export function Uploader() {
           className="hidden"
         />
         <svg
-          className="mx-auto h-12 w-12 text-muted-foreground"
+          className="mx-auto h-12 w-12 text-gray-400"
           stroke="currentColor"
           fill="none"
           viewBox="0 0 48 48"
@@ -551,46 +593,46 @@ export function Uploader() {
             strokeLinejoin="round"
           />
         </svg>
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p className="mt-2 text-sm text-gray-600">
           Click to upload or drag and drop
         </p>
-        <p className="text-xs text-muted-foreground mt-1">
+        <p className="text-xs text-gray-500 mt-1">
           Video files only • Resumable uploads for files over 100MB
         </p>
       </div>
 
-      {Object.entries(uploads).map(([id, upload]) => (
-        <div key={id} className="border border-border rounded-lg p-4">
+      {Object.entries(uploadSessions).map(([id, session]) => (
+        <div key={id} className="border border-gray-200 rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{upload.filename}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {(upload.uploadedBytes / 1024 / 1024).toFixed(1)} MB /{" "}
-                {(upload.totalBytes / 1024 / 1024).toFixed(1)} MB
+              <p className="text-sm font-medium truncate">{session.filename}</p>
+              <p className="text-xs text-gray-500 mt-1">
+                {(session.uploadedBytes / 1024 / 1024).toFixed(1)} MB /{" "}
+                {(session.totalBytes / 1024 / 1024).toFixed(1)} MB
               </p>
             </div>
             <div className="flex gap-2 ml-4">
-              {upload.status === "uploading" && (
+              {session.status === "uploading" && (
                 <button
                   onClick={() => pauseUpload(id)}
-                  className="text-xs px-2 py-1 hover:bg-secondary rounded"
+                  className="text-xs px-2 py-1 hover:bg-gray-100 rounded"
                 >
                   Pause
                 </button>
               )}
-              {upload.status === "paused" && (
+              {session.status === "paused" && (
                 <button
                   onClick={() => resumeUpload(id)}
-                  className="text-xs px-2 py-1 bg-primary text-primary-foreground hover:opacity-90 rounded"
+                  className="text-xs px-2 py-1 bg-blue-500 text-white hover:bg-blue-600 rounded"
                 >
                   Resume
                 </button>
               )}
-              {(upload.status === "uploading" ||
-                upload.status === "paused") && (
+              {(session.status === "uploading" ||
+                session.status === "paused") && (
                 <button
                   onClick={() => cancelUpload(id)}
-                  className="text-xs px-2 py-1 text-destructive hover:bg-destructive/10 rounded"
+                  className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 rounded"
                 >
                   Cancel
                 </button>
@@ -598,26 +640,26 @@ export function Uploader() {
             </div>
           </div>
 
-          <div className="w-full bg-secondary rounded-full h-2 mb-2">
+          <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
             <div
               className={`h-2 rounded-full transition-all ${
-                upload.status === "error"
-                  ? "bg-destructive"
-                  : upload.status === "paused"
-                  ? "bg-muted-foreground"
-                  : "bg-primary"
+                session.status === "error"
+                  ? "bg-red-500"
+                  : session.status === "paused"
+                  ? "bg-gray-500"
+                  : "bg-blue-500"
               }`}
-              style={{ width: `${upload.progress}%` }}
+              style={{ width: `${session.progress}%` }}
             />
           </div>
 
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span className="capitalize">{upload.status}</span>
-            <span>{Math.round(upload.progress)}%</span>
+          <div className="flex items-center justify-between text-xs text-gray-500">
+            <span className="capitalize">{session.status}</span>
+            <span>{Math.round(session.progress)}%</span>
           </div>
 
-          {upload.error && (
-            <p className="text-xs text-destructive mt-2">{upload.error}</p>
+          {session.error && (
+            <p className="text-xs text-red-600 mt-2">{session.error}</p>
           )}
         </div>
       ))}
@@ -651,38 +693,7 @@ async function calculateChecksum(file: File): Promise<string> {
   return btoa(binary);
 }
 
-type UploadStatus =
-  | "uploading"
-  | "processing"
-  | "complete"
-  | "error"
-  | "paused";
-
-interface UploadProgress {
-  uploadId: string;
-  filename: string;
-  progress: number;
-  uploadedBytes: number;
-  totalBytes: number;
-  status: UploadStatus;
-  error?: string;
-  uploadedChunks: Set<number>;
-  sessionId?: string;
-  urlsExpiresAt?: string;
-}
-
-interface SavedSession {
-  uploadId: string;
-  filename: string;
-  progress: number;
-  uploadedBytes: number;
-  totalBytes: number;
-  status: UploadStatus;
-  error?: string;
-  uploadedChunks: number[];
-  sessionId?: string;
-  urlsExpiresAt?: string;
-}
+type UploadStatus = "uploading" | "complete" | "error" | "paused";
 
 type UploadedPart = {
   PartNumber: number;
@@ -691,24 +702,30 @@ type UploadedPart = {
 
 type UploadedParts = UploadedPart[];
 
-interface MultipartUploadSession {
-  type: "multipart";
+interface UploadSession {
+  // Progress data (for UI)
   uploadId: string;
-  multipartUploadId: string;
-  partUrls: string[];
-  totalChunks: number;
-  uploadedParts: UploadedParts | null;
+  filename: string;
+  progress: number;
+  uploadedBytes: number;
+  totalBytes: number;
+  status: UploadStatus;
+  error?: string;
+  uploadedChunks: Set<number>;
+
+  // Session data (for resuming)
+  type?: "multipart" | "single";
+  multipartUploadId?: string;
+  partUrls?: string[];
+  uploadUrl?: string;
+  totalChunks?: number;
+  uploadedParts?: UploadedParts | null;
   urlsExpiresAt?: string;
 }
 
-interface SingleUploadSession {
-  type: "single";
-  uploadId: string;
-  uploadUrl: string;
-  totalChunks: 1;
+interface SavedSession extends Omit<UploadSession, "uploadedChunks"> {
+  uploadedChunks: number[];
 }
-
-type UploadSession = MultipartUploadSession | SingleUploadSession;
 
 type SingleUploadResponse = {
   type: "single";
