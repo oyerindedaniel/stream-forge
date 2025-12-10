@@ -1,10 +1,9 @@
-import dotenv from "dotenv";
+import "dotenv/config";
+
 import { worker } from "./workers";
 import { Job } from "bullmq";
 import { redisPublisher } from "./lib/redis";
 import { REDIS_URL, S3_BUCKET_NAME } from "./lib/constants";
-
-dotenv.config();
 
 console.log("[Worker] Starting video processing worker...");
 console.log("[Worker] Redis URL:", REDIS_URL);

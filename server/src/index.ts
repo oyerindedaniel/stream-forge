@@ -1,6 +1,7 @@
+import "dotenv/config";
+
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import dotenv from "dotenv";
 import path from "path";
 import fastifyStatic from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
@@ -12,11 +13,10 @@ import { healthRoutes } from "./modules/health/routes";
 import { redisPrimary, redisRate } from "./lib/redis";
 import { rateLimitConfigs } from "./lib/rate-limiter";
 import { CORS_ORIGIN } from "./lib/constants";
-
-dotenv.config();
+import { logger } from "./lib/monitoring";
 
 const fastify = Fastify({
-  logger: true,
+  logger,
 });
 
 fastify.register(cors, {

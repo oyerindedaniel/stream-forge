@@ -1,8 +1,7 @@
-import Redis from "ioredis";
-import dotenv from "dotenv";
-import { REDIS_URL } from "./constants";
+import "dotenv/config";
 
-dotenv.config();
+import Redis from "ioredis";
+import { REDIS_URL } from "./constants";
 
 const redisUrl = REDIS_URL;
 

@@ -16,7 +16,7 @@ interface Video {
   createdAt: string;
 }
 
-async function fetchVideos(): Promise<Video[]> {
+async function fetchVideos(): Promise<{ videos: Video[] }> {
   const res = await fetch(`${API_URL}/api/v1/videos`);
   if (!res.ok) throw new Error("Failed to fetch videos");
   return res.json();
@@ -33,11 +33,7 @@ export function VideoList() {
   const queryClient = useQueryClient();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const {
-    data: videos,
-    isPending,
-    isRefetching,
-  } = useQuery({
+  const { data, isPending, isRefetching } = useQuery({
     queryKey: ["videos"],
     queryFn: fetchVideos,
     refetchInterval: (query) => {
@@ -75,7 +71,7 @@ export function VideoList() {
         <h2 className="text-2xl font-bold">Your Videos</h2>
         {isRefetching && (
           <div className="text-sm text-muted-foreground flex items-center gap-2">
-            <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+            <LoaderIcon fill="white" />
             Updating...
           </div>
         )}
@@ -85,17 +81,17 @@ export function VideoList() {
         <div className="flex justify-center items-center p-10">
           <LoaderIcon fill="white" />
         </div>
-      ) : !videos || videos.length === 0 ? (
+      ) : !data || data.videos.length === 0 ? (
         <div className="text-center p-10 text-muted-foreground">
           No videos yet. Upload one to get started!
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {videos.map((video) => (
+          {data.videos.map((video) => (
             <div key={video.id} className="relative group">
               <Link
                 href={`/video/${video.id}`}
-                className="block p-4 border rounded-lg hover:border-primary hover:shadow-lg transition-all"
+                className="block p-4 rounded-3xl border-2 hover:border-primary hover:shadow-lg transition-all"
               >
                 <div className="aspect-video bg-secondary rounded mb-2 flex items-center justify-center">
                   {video.status === "ready" ? (
@@ -119,13 +115,15 @@ export function VideoList() {
                       />
                     </svg>
                   ) : (
-                    <div className="text-sm text-muted-foreground capitalize">
+                    <div className="text-sm text-muted-foreground capitalize font-mono">
                       {video.status.replace("_", " ")}
                     </div>
                   )}
                 </div>
-                <h3 className="font-semibold truncate">{video.title}</h3>
-                <div className="flex justify-between text-sm text-muted-foreground mt-1">
+                <h3 className="font-semibold truncate font-mono">
+                  {video.title}
+                </h3>
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
                   <span
                     className={`capitalize ${
                       video.status === "ready"
@@ -149,11 +147,11 @@ export function VideoList() {
               <button
                 onClick={(e) => handleDelete(e, video.id)}
                 disabled={deletingId === video.id}
-                className="absolute top-2 right-2 p-2 bg-destructive/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="absolute top-2 right-2 cursor-pointer p-2 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Delete video"
               >
                 {deletingId === video.id ? (
-                  <LoaderIcon />
+                  <LoaderIcon fill="white" />
                 ) : (
                   <svg
                     className="w-4 h-4"

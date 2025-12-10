@@ -94,6 +94,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       });
 
       return {
+        type: "multipart",
         uploadId: videoId,
         multipartUploadId: multipartUpload.UploadId,
         partUrls,
@@ -121,6 +122,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       });
 
       return {
+        type: "single",
         uploadId: videoId,
         uploadUrl,
         expiresAt: new Date(
