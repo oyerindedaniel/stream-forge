@@ -13,6 +13,8 @@ import { storage } from "../lib/storage";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { S3Keys } from "../lib/s3-keys";
 import { VIDEO_QUALITIES } from "../lib/constants";
+import ffmpegPath from "ffmpeg-static";
+import ffprobePath from "ffprobe-static";
 
 const execPromise = promisify(exec);
 
@@ -20,6 +22,19 @@ const TMP_DIR = path.join(process.cwd(), "tmp");
 if (!fs.existsSync(TMP_DIR)) {
   fs.mkdirSync(TMP_DIR, { recursive: true });
 }
+
+if (!ffmpegPath) {
+  throw new Error("ffmpeg-static path not found");
+}
+if (!ffprobePath?.path) {
+  throw new Error("ffprobe-static path not found");
+}
+
+const FFMPEG_PATH = ffmpegPath;
+const FFPROBE_PATH = ffprobePath.path;
+
+console.log("[Worker] Using FFmpeg:", FFMPEG_PATH);
+console.log("[Worker] Using FFprobe:", FFPROBE_PATH);
 
 interface ProbeData {
   streams: Array<{
@@ -37,7 +52,7 @@ interface ProbeData {
 async function probeVideo(filePath: string): Promise<ProbeData> {
   try {
     const { stdout } = await execPromise(
-      `ffprobe -v quiet -print_format json -show_format -show_streams "${filePath}"`
+      `"${FFPROBE_PATH}" -v quiet -print_format json -show_format -show_streams "${filePath}"`
     );
     return JSON.parse(stdout);
   } catch (error) {
@@ -57,7 +72,7 @@ async function transcodeVideo(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const args = ["-i", inputPath, ...options, outputPath];
-    const ffmpegProcess = spawn("ffmpeg", args);
+    const ffmpegProcess = spawn(FFMPEG_PATH, args);
 
     let stderr = "";
 

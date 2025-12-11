@@ -17,7 +17,7 @@ export default function Home() {
       <main className="container mx-auto px-6 py-10 space-y-12">
         <section className="space-y-4">
           <h2 className="text-2xl font-bold tracking-tight">Upload Center</h2>
-          <div className="max-w-xl">
+          <div className="max-w-xl mx-auto">
             <Uploader />
           </div>
         </section>

@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { db } from "../../db";
 import { videos } from "../../db/schema";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import { storage } from "../../lib/storage";
 import { S3Keys } from "../../lib/s3-keys";
 
@@ -10,8 +10,20 @@ export async function videoRoutes(fastify: FastifyInstance) {
     const allVideos = await db
       .select()
       .from(videos)
+      .where(and(ne(videos.status, "deleted"), isNull(videos.deletedAt)))
       .orderBy(desc(videos.createdAt));
-    return { videos: allVideos };
+
+    return {
+      videos: allVideos.map((video) => ({
+        id: video.id,
+        title: video.title,
+        status: video.status,
+        duration: video.duration,
+        width: video.width,
+        height: video.height,
+        createdAt: video.createdAt,
+      })),
+    };
   });
 
   fastify.get("/:id", async (request, reply) => {
@@ -63,13 +75,12 @@ export async function videoRoutes(fastify: FastifyInstance) {
   fastify.delete("/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    console.log(id);
-
     const video = await db
       .select()
       .from(videos)
       .where(eq(videos.id, id))
       .limit(1);
+
     if (!video || video.length === 0) {
       return reply.status(404).send({ error: "Video not found" });
     }

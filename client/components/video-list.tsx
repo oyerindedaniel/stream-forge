@@ -9,7 +9,14 @@ import { useState } from "react";
 interface Video {
   id: string;
   title: string;
-  status: string;
+  status:
+    | "ready"
+    | "pending_upload"
+    | "uploading"
+    | "processing"
+    | "failed"
+    | "cancelled"
+    | "deleted";
   duration?: number;
   width?: number;
   height?: number;
@@ -33,14 +40,14 @@ export function VideoList() {
   const queryClient = useQueryClient();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const { data, isPending, isRefetching } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ["videos"],
     queryFn: fetchVideos,
     refetchInterval: (query) => {
       if (query.state.status === "pending" || query.state.status === "error") {
         return false;
       }
-      return 5000;
+      return 7000;
     },
   });
 
@@ -69,12 +76,12 @@ export function VideoList() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold">Your Videos</h2>
-        {isRefetching && (
+        {/* {isRefetching && (
           <div className="text-sm text-muted-foreground flex items-center gap-2">
             <LoaderIcon fill="white" />
             Updating...
           </div>
-        )}
+        )} */}
       </div>
 
       {isPending ? (
@@ -120,12 +127,10 @@ export function VideoList() {
                     </div>
                   )}
                 </div>
-                <h3 className="font-semibold truncate font-mono">
-                  {video.title}
-                </h3>
+                <h3 className="font-semibold truncate">{video.title}</h3>
                 <div className="flex justify-between text-xs text-muted-foreground mt-1">
                   <span
-                    className={`capitalize ${
+                    className={`capitalize font-mono ${
                       video.status === "ready"
                         ? "text-green-500"
                         : video.status === "failed"
@@ -151,7 +156,7 @@ export function VideoList() {
                 title="Delete video"
               >
                 {deletingId === video.id ? (
-                  <LoaderIcon fill="white" />
+                  <LoaderIcon size={20} fill="white" />
                 ) : (
                   <svg
                     className="w-4 h-4"

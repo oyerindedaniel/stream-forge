@@ -1,21 +1,9 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { STORAGE_KEY } from "@/app/lib/constants";
+import { UploadSession } from "@/components/uploader";
 
 const CLEANUP_INTERVAL = 60 * 1000;
-
-interface SavedSession {
-  uploadId: string;
-  filename: string;
-  progress: number;
-  uploadedBytes: number;
-  totalBytes: number;
-  status: "uploading" | "processing" | "complete" | "error" | "paused";
-  error?: string;
-  uploadedChunks: number[];
-  sessionId?: string;
-  urlsExpiresAt?: string;
-}
 
 let cleanupIntervalId: NodeJS.Timeout | null = null;
 let instanceCount = 0;
@@ -27,33 +15,29 @@ const cleanupExpiredSessions = () => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return;
 
-    const sessions = JSON.parse(saved) as Record<string, SavedSession>;
+    const sessions = JSON.parse(saved) as Record<string, UploadSession>;
     const now = Date.now();
     let hasChanges = false;
 
-    const validSessions: Record<string, SavedSession> = {};
+    const validSessions: Record<string, UploadSession> = {};
 
     for (const [id, session] of Object.entries(sessions)) {
-      if (
-        session.status === "complete" ||
-        session.status === "processing" ||
-        session.status === "error"
-      ) {
+      if (session.status === "complete") {
         hasChanges = true;
         continue;
       }
 
-      if (session.urlsExpiresAt) {
-        const expiresAt = new Date(session.urlsExpiresAt).getTime();
+      // if (session.urlsExpiresAt) {
+      //   const expiresAt = new Date(session.urlsExpiresAt).getTime();
 
-        if (now >= expiresAt) {
-          console.log(
-            `[UploadCleanup] Removing expired session: ${session.filename}`
-          );
-          hasChanges = true;
-          continue;
-        }
-      }
+      //   if (now >= expiresAt) {
+      //     console.log(
+      //       `[UploadCleanup] Removing expired session: ${session.filename}`
+      //     );
+      //     hasChanges = true;
+      //     continue;
+      //   }
+      // }
 
       validSessions[id] = session;
     }

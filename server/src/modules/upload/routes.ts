@@ -132,6 +132,34 @@ export async function uploadRoutes(fastify: FastifyInstance) {
     }
   });
 
+  fastify.patch("/:uploadId/checksum", async (request, reply) => {
+    const { uploadId } = request.params as { uploadId: string };
+    const { checksum } = request.body as { checksum: string };
+
+    if (!checksum) {
+      return reply.status(400).send({ error: "Checksum required" });
+    }
+
+    const video = await db
+      .select()
+      .from(videos)
+      .where(eq(videos.id, uploadId))
+      .limit(1);
+
+    if (!video || video.length === 0) {
+      return reply.status(404).send({ error: "Video not found" });
+    }
+
+    await db
+      .update(videos)
+      .set({ sourceChecksum: checksum, updatedAt: new Date() })
+      .where(eq(videos.id, uploadId));
+
+    console.log(`[Checksum] Received for video ${uploadId}`);
+
+    return { success: true };
+  });
+
   fastify.post("/:uploadId/refresh-urls", async (request, reply) => {
     const { uploadId } = request.params as { uploadId: string };
     const { multipartUploadId } = request.body as {

@@ -17,15 +17,9 @@ export function Uploader() {
     try {
       const sessions = JSON.parse(saved) as Record<string, SavedSession>;
       const restored: Record<string, UploadSession> = {};
-      const now = Date.now();
 
       Object.values(sessions).forEach((session) => {
         if (session.status === "uploading" || session.status === "paused") {
-          if (session.urlsExpiresAt) {
-            const expiresAt = new Date(session.urlsExpiresAt).getTime();
-            if (now >= expiresAt) return;
-          }
-
           restored[session.uploadId] = {
             ...session,
             status: "paused",
@@ -53,6 +47,7 @@ export function Uploader() {
     )
   );
   const abortControllersRef = useRef<Record<string, AbortController>>({});
+  const fileRefsRef = useRef<Record<string, File>>({});
 
   const saveSessions = (currentSessions: Record<string, UploadSession>) => {
     const toSave = Object.fromEntries(
@@ -83,6 +78,8 @@ export function Uploader() {
   const uploadFile = async (file: File, resumeId?: string) => {
     const tempId = resumeId || crypto.randomUUID();
 
+    fileRefsRef.current[tempId] = file;
+
     abortControllersRef.current[tempId] = new AbortController();
 
     const initialSession: UploadSession = {
@@ -112,10 +109,6 @@ export function Uploader() {
           contentType: file.type,
           size: file.size,
           metadata: { title: file.name },
-          checksum: await calculateChecksum(file).catch((e) => {
-            console.warn("Checksum calculation failed:", e);
-            return undefined;
-          }),
         }),
       });
 
@@ -147,7 +140,27 @@ export function Uploader() {
           return updated;
         });
 
-        await uploadChunked(tempId, file, initData.partUrls, initData.partSize);
+        const checksum = await uploadChunked(
+          tempId,
+          file,
+          initData.partUrls,
+          initData.partSize
+        );
+
+        if (checksum) {
+          try {
+            await fetch(
+              `${API_URL}/api/v1/uploads/${initData.uploadId}/checksum`,
+              {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ checksum }),
+              }
+            );
+          } catch (error) {
+            console.warn("Failed to send checksum:", error);
+          }
+        }
       } else {
         const updatedSession: UploadSession = {
           ...uploadSessionsRef.current[tempId],
@@ -202,16 +215,22 @@ export function Uploader() {
         progress: 100,
       };
 
-      uploadSessionsRef.current[tempId] = completedSession;
+      setUploadSessions((prev) => ({
+        ...prev,
+        [tempId]: completedSession,
+      }));
 
-      setUploadSessions((prev) => {
-        const updated = { ...prev, [tempId]: completedSession };
-        saveSessions(updated);
-        return updated;
-      });
+      setTimeout(() => {
+        delete uploadSessionsRef.current[tempId];
+        delete uploadsPausedRef.current[tempId];
+        delete fileRefsRef.current[tempId];
 
-      delete uploadSessionsRef.current[tempId];
-      delete uploadsPausedRef.current[tempId];
+        setUploadSessions((prev) => {
+          const { [tempId]: removed, ...rest } = prev;
+          saveSessions(rest);
+          return rest;
+        });
+      }, 2000);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         console.log("Upload cancelled by user");
@@ -257,6 +276,9 @@ export function Uploader() {
       throw new Error("Upload aborted before starting");
     }
 
+    const hasher = await createSHA256();
+    hasher.init();
+
     for (let i = 0; i < partUrls.length; i++) {
       if (uploadsPausedRef.current[tempId]) {
         return;
@@ -269,6 +291,9 @@ export function Uploader() {
       const start = i * chunkSize;
       const end = Math.min(start + chunkSize, file.size);
       const chunk = file.slice(start, end);
+
+      const chunkBuffer = await chunk.arrayBuffer();
+      hasher.update(new Uint8Array(chunkBuffer));
 
       let retries = 3;
       while (retries > 0) {
@@ -332,6 +357,16 @@ export function Uploader() {
     }
 
     uploadSessionsRef.current[tempId].uploadedParts = uploadedParts;
+
+    const digest = hasher.digest("binary");
+    const bytes = new Uint8Array(digest);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const checksum = btoa(binary);
+
+    return checksum;
   };
 
   const uploadDirect = async (
@@ -339,8 +374,10 @@ export function Uploader() {
     file: File,
     uploadUrl: string
   ) => {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>(async (resolve, reject) => {
       const xhr = new XMLHttpRequest();
+
+      const checksum = await calculateChecksum(file).catch(() => undefined);
 
       xhr.upload.addEventListener("progress", (e) => {
         if (e.lengthComputable) {
@@ -360,8 +397,23 @@ export function Uploader() {
         }
       });
 
-      xhr.onload = () => {
+      xhr.onload = async () => {
         if (xhr.status >= 200 && xhr.status < 300) {
+          if (checksum) {
+            const session = uploadSessionsRef.current[tempId];
+            try {
+              await fetch(
+                `${API_URL}/api/v1/uploads/${session.uploadId}/checksum`,
+                {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ checksum }),
+                }
+              );
+            } catch (error) {
+              console.warn("Failed to send checksum:", error);
+            }
+          }
           resolve();
         } else {
           reject(new Error(`Upload failed with status ${xhr.status}`));
@@ -377,6 +429,12 @@ export function Uploader() {
 
   const pauseUpload = (tempId: string) => {
     uploadsPausedRef.current[tempId] = true;
+
+    const abortController = abortControllersRef.current[tempId];
+    if (abortController) {
+      abortController.abort();
+      delete abortControllersRef.current[tempId];
+    }
 
     const pausedSession: UploadSession = {
       ...uploadSessionsRef.current[tempId],
@@ -397,16 +455,9 @@ export function Uploader() {
     abortControllersRef.current[tempId] = new AbortController();
     const session = uploadSessions[tempId];
 
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "video/*";
-    input.onchange = async (e: Event) => {
-      const target = e.target as HTMLInputElement;
-      const file = target.files?.[0];
-      if (!file || file.name !== session.filename) {
-        return;
-      }
+    const cachedFile = fileRefsRef.current[tempId];
 
+    const processResume = async (file: File) => {
       const uploadingSession: UploadSession = {
         ...uploadSessionsRef.current[tempId],
         status: "uploading",
@@ -501,18 +552,28 @@ export function Uploader() {
           throw new Error("Failed to complete upload");
         }
 
-        const processingSession: UploadSession = {
+        const completedSession: UploadSession = {
           ...uploadSessionsRef.current[tempId],
           status: "complete",
           progress: 100,
         };
 
-        uploadSessionsRef.current[tempId] = processingSession;
-
         setUploadSessions((prev) => ({
           ...prev,
-          [tempId]: processingSession,
+          [tempId]: completedSession,
         }));
+
+        setTimeout(() => {
+          delete uploadSessionsRef.current[tempId];
+          delete uploadsPausedRef.current[tempId];
+          delete fileRefsRef.current[tempId];
+
+          setUploadSessions((prev) => {
+            const { [tempId]: removed, ...rest } = prev;
+            saveSessions(rest);
+            return rest;
+          });
+        }, 2000);
       } catch (error) {
         console.error("Resume error:", error);
 
@@ -530,7 +591,32 @@ export function Uploader() {
         }));
       }
     };
-    input.click();
+
+    if (cachedFile) {
+      console.log(`[Resume] Using cached file for ${session.filename}`);
+      await processResume(cachedFile);
+    } else {
+      console.log(
+        `[Resume] File not in memory, prompting user for ${session.filename}`
+      );
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "video/*";
+      input.onchange = async (e: Event) => {
+        const target = e.target as HTMLInputElement;
+        const file = target.files?.[0];
+
+        if (!file || file.name !== session.filename) {
+          alert("Please select the same file that was originally uploaded");
+          return;
+        }
+
+        fileRefsRef.current[tempId] = file;
+
+        await processResume(file);
+      };
+      input.click();
+    }
   };
 
   const cancelUpload = async (tempId: string) => {
@@ -564,6 +650,7 @@ export function Uploader() {
 
     delete uploadSessionsRef.current[tempId];
     delete uploadsPausedRef.current[tempId];
+    delete fileRefsRef.current[tempId];
   };
 
   return (
@@ -646,7 +733,7 @@ export function Uploader() {
                 session.status === "error"
                   ? "bg-red-500"
                   : session.status === "paused"
-                  ? "bg-gray-500"
+                  ? "bg-gray-500 text-black"
                   : "bg-blue-500"
               }`}
               style={{ width: `${session.progress}%` }}
@@ -654,12 +741,14 @@ export function Uploader() {
           </div>
 
           <div className="flex items-center justify-between text-xs text-gray-500">
-            <span className="capitalize">{session.status}</span>
+            <span className="capitalize font-mono">{session.status}</span>
             <span>{Math.round(session.progress)}%</span>
           </div>
 
           {session.error && (
-            <p className="text-xs text-red-600 mt-2">{session.error}</p>
+            <p className="text-xs text-red-600 mt-2 font-mono">
+              {session.error}
+            </p>
           )}
         </div>
       ))}
@@ -680,7 +769,6 @@ async function calculateChecksum(file: File): Promise<string> {
     const buffer = await chunk.arrayBuffer();
 
     hasher.update(new Uint8Array(buffer));
-    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
   const digest = hasher.digest("binary");
@@ -702,7 +790,7 @@ type UploadedPart = {
 
 type UploadedParts = UploadedPart[];
 
-interface UploadSession {
+export interface UploadSession {
   // Progress data (for UI)
   uploadId: string;
   filename: string;
