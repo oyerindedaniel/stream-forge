@@ -36,9 +36,20 @@ async function deleteVideo(videoId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete video");
 }
 
+async function retryVideo(videoId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/v1/videos/${videoId}/retry`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || "Failed to retry video");
+  }
+}
+
 export function VideoList() {
   const queryClient = useQueryClient();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
   const { data, isPending } = useQuery({
     queryKey: ["videos"],
@@ -63,6 +74,18 @@ export function VideoList() {
     },
   });
 
+  const retryMutation = useMutation({
+    mutationFn: retryVideo,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
+      setRetryingId(null);
+    },
+    onError: (error) => {
+      console.error("Failed to retry video:", error);
+      setRetryingId(null);
+    },
+  });
+
   const handleDelete = (e: React.MouseEvent, videoId: string) => {
     e.preventDefault();
 
@@ -70,6 +93,14 @@ export function VideoList() {
       setDeletingId(videoId);
       deleteMutation.mutate(videoId);
     }
+  };
+
+  const handleRetry = (e: React.MouseEvent, videoId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    setRetryingId(videoId);
+    retryMutation.mutate(videoId);
   };
 
   return (
@@ -149,30 +180,59 @@ export function VideoList() {
                 </div>
               </Link>
 
-              <button
-                onClick={(e) => handleDelete(e, video.id)}
-                disabled={deletingId === video.id}
-                className="absolute top-2 right-2 cursor-pointer p-2 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Delete video"
-              >
-                {deletingId === video.id ? (
-                  <LoaderIcon size={20} fill="white" />
-                ) : (
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
+              <div className="absolute top-2 right-2 flex gap-2">
+                {video.status === "failed" && (
+                  <button
+                    onClick={(e) => handleRetry(e, video.id)}
+                    disabled={retryingId === video.id}
+                    className="p-2 bg-yellow-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-yellow-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Retry processing"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
+                    {retryingId === video.id ? (
+                      <LoaderIcon size={20} fill="white" />
+                    ) : (
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                        />
+                      </svg>
+                    )}
+                  </button>
                 )}
-              </button>
+
+                <button
+                  onClick={(e) => handleDelete(e, video.id)}
+                  disabled={deletingId === video.id}
+                  className="p-2 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Delete video"
+                >
+                  {deletingId === video.id ? (
+                    <LoaderIcon size={20} fill="white" />
+                  ) : (
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
           ))}
         </div>

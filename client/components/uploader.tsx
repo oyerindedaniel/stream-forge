@@ -140,25 +140,34 @@ export function Uploader() {
           return updated;
         });
 
-        const checksum = await uploadChunked(
+        const uploadedParts = await uploadChunked(
           tempId,
           file,
           initData.partUrls,
           initData.partSize
         );
 
-        if (checksum) {
+        if (uploadedParts && uploadedParts.length > 0) {
           try {
             await fetch(
-              `${API_URL}/api/v1/uploads/${initData.uploadId}/checksum`,
+              `${API_URL}/api/v1/uploads/${initData.uploadId}/part-checksums`,
               {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ checksum }),
+                body: JSON.stringify({
+                  parts: uploadedParts.map((part) => ({
+                    partNumber: part.PartNumber,
+                    checksum: part.Checksum,
+                    size: part.Size,
+                  })),
+                }),
               }
             );
+            console.log(
+              `[Checksums] Sent ${uploadedParts.length} part checksums`
+            );
           } catch (error) {
-            console.warn("Failed to send checksum:", error);
+            console.warn("Failed to send part checksums:", error);
           }
         }
       } else {
@@ -263,8 +272,6 @@ export function Uploader() {
     partUrls: string[],
     chunkSize: number
   ) => {
-    const uploadedParts: UploadedParts = [];
-
     const session = uploadSessionsRef.current[tempId];
     if (!session.type || session.type !== "multipart") {
       console.error(`Session type is "${session.type}", expected "multipart"`);
@@ -276,24 +283,34 @@ export function Uploader() {
       throw new Error("Upload aborted before starting");
     }
 
-    const hasher = await createSHA256();
-    hasher.init();
+    const uploadedParts: UploadedParts = session.uploadedParts || [];
+
+    const existingPartsMap = new Map(
+      uploadedParts.map((part) => [part.PartNumber - 1, part])
+    );
 
     for (let i = 0; i < partUrls.length; i++) {
       if (uploadsPausedRef.current[tempId]) {
-        return;
+        return uploadedParts;
       }
 
-      if (uploadSessionsRef.current[tempId]?.uploadedChunks.has(i)) {
+      if (session.uploadedChunks.has(i)) {
+        console.log(`[Chunk ${i}] Already uploaded, skipping...`);
         continue;
       }
 
       const start = i * chunkSize;
       const end = Math.min(start + chunkSize, file.size);
       const chunk = file.slice(start, end);
-
       const chunkBuffer = await chunk.arrayBuffer();
-      hasher.update(new Uint8Array(chunkBuffer));
+
+      const chunkHasher = await createSHA256();
+      chunkHasher.init();
+      chunkHasher.update(new Uint8Array(chunkBuffer));
+      const chunkDigest = chunkHasher.digest("binary");
+      const chunkChecksum = btoa(
+        String.fromCharCode(...new Uint8Array(chunkDigest))
+      );
 
       let retries = 3;
       while (retries > 0) {
@@ -313,10 +330,14 @@ export function Uploader() {
             throw new Error(`No ETag returned for part ${i + 1}`);
           }
 
-          uploadedParts.push({
+          const newPart: UploadedPart = {
             PartNumber: i + 1,
             ETag: etag.replace(/"/g, ""),
-          });
+            Checksum: chunkChecksum,
+            Size: chunkBuffer.byteLength,
+          };
+
+          existingPartsMap.set(i, newPart);
 
           setUploadSessions((prev) => {
             const newChunks = new Set(prev[tempId].uploadedChunks);
@@ -327,11 +348,16 @@ export function Uploader() {
               return sum + (chunkEnd - chunkStart);
             }, 0);
 
+            const completeUploadedParts = Array.from(
+              existingPartsMap.values()
+            ).sort((a, b) => a.PartNumber - b.PartNumber);
+
             const updatedSession: UploadSession = {
               ...prev[tempId],
               uploadedChunks: newChunks,
               uploadedBytes,
               progress: (uploadedBytes / file.size) * 100,
+              uploadedParts: completeUploadedParts,
             };
 
             uploadSessionsRef.current[tempId] = updatedSession;
@@ -356,17 +382,13 @@ export function Uploader() {
       }
     }
 
-    uploadSessionsRef.current[tempId].uploadedParts = uploadedParts;
+    const finalParts = Array.from(existingPartsMap.values()).sort(
+      (a, b) => a.PartNumber - b.PartNumber
+    );
 
-    const digest = hasher.digest("binary");
-    const bytes = new Uint8Array(digest);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const checksum = btoa(binary);
+    uploadSessionsRef.current[tempId].uploadedParts = finalParts;
 
-    return checksum;
+    return finalParts;
   };
 
   const uploadDirect = async (
@@ -403,12 +425,23 @@ export function Uploader() {
             const session = uploadSessionsRef.current[tempId];
             try {
               await fetch(
-                `${API_URL}/api/v1/uploads/${session.uploadId}/checksum`,
+                `${API_URL}/api/v1/uploads/${session.uploadId}/part-checksums`,
                 {
                   method: "PATCH",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ checksum }),
+                  body: JSON.stringify({
+                    parts: [
+                      {
+                        partNumber: 1,
+                        checksum: checksum,
+                        size: file.size,
+                      },
+                    ],
+                  }),
                 }
+              );
+              console.log(
+                `[Checksum] Sent checksum for single upload (1 part)`
               );
             } catch (error) {
               console.warn("Failed to send checksum:", error);
@@ -521,7 +554,36 @@ export function Uploader() {
             });
           }
 
-          await uploadChunked(tempId, file, partUrls, partSize);
+          const uploadedParts = await uploadChunked(
+            tempId,
+            file,
+            partUrls,
+            partSize
+          );
+
+          if (uploadedParts && uploadedParts.length > 0) {
+            try {
+              await fetch(
+                `${API_URL}/api/v1/uploads/${sessionRef.uploadId}/part-checksums`,
+                {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    parts: uploadedParts.map((part) => ({
+                      partNumber: part.PartNumber,
+                      checksum: part.Checksum,
+                      size: part.Size,
+                    })),
+                  }),
+                }
+              );
+              console.log(
+                `[Resume] Sent ${uploadedParts.length} part checksums`
+              );
+            } catch (error) {
+              console.warn("Failed to send part checksums on resume:", error);
+            }
+          }
         } else {
           // For direct upload, we re-initialize
           uploadFile(file, tempId);
@@ -786,6 +848,8 @@ type UploadStatus = "uploading" | "complete" | "error" | "paused";
 type UploadedPart = {
   PartNumber: number;
   ETag: string;
+  Checksum: string;
+  Size: number;
 };
 
 type UploadedParts = UploadedPart[];

@@ -15,36 +15,40 @@ worker.on("ready", () => {
 
 worker.on("active", (job: Job) => {
   console.log(
-    `[Worker] Processing job ${job.id} for video ${job.data.videoId}`
+    `[Worker] Processing job ${job.id} (${job.name}) for video ${job.data.videoId}`
   );
 
-  redisPublisher
-    .publish(
-      "video:status",
-      JSON.stringify({
-        videoId: job.data.videoId,
-        status: "processing",
-      })
-    )
-    .catch((err) => console.error("[Worker] Failed to publish status:", err));
+  if (job.name === "transcode") {
+    redisPublisher
+      .publish(
+        "video:status",
+        JSON.stringify({
+          videoId: job.data.videoId,
+          status: "processing",
+        })
+      )
+      .catch((err) => console.error("[Worker] Failed to publish status:", err));
+  }
 });
 
 worker.on("completed", (job: Job) => {
-  console.log(`[Worker] Job ${job.id} completed successfully`);
+  console.log(`[Worker] Job ${job.id} (${job.name}) completed successfully`);
 
-  redisPublisher
-    .publish(
-      "video:status",
-      JSON.stringify({
-        videoId: job.data.videoId,
-        status: "ready",
-      })
-    )
-    .catch((err) => console.error("[Worker] Failed to publish status:", err));
+  if (job.name === "transcode") {
+    redisPublisher
+      .publish(
+        "video:status",
+        JSON.stringify({
+          videoId: job.data.videoId,
+          status: "ready",
+        })
+      )
+      .catch((err) => console.error("[Worker] Failed to publish status:", err));
+  }
 });
 
 worker.on("failed", (job: Job | undefined, err: Error) => {
-  console.error(`[Worker] Job ${job?.id} failed:`, err.message);
+  console.error(`[Worker] Job ${job?.id} (${job?.name}) failed:`, err.message);
   console.error("[Worker] Error stack:", err.stack);
 
   if (job) {

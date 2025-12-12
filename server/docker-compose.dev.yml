@@ -52,9 +52,13 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/dist
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./drizzle:/app/drizzle
+      - ./drizzle.config.ts:/app/drizzle.config.ts
+      - ./package.json:/app/package.json
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./tsconfig.json:/app/tsconfig.json
       - ./tmp:/app/tmp
     command: sh -c "pnpm db:migrate && pnpm dev"
     stdin_open: true
@@ -81,9 +85,13 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/dist
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./drizzle:/app/drizzle
+      - ./drizzle.config.ts:/app/drizzle.config.ts
+      - ./package.json:/app/package.json
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./tsconfig.json:/app/tsconfig.json
       - ./tmp:/app/tmp
     stdin_open: true
     tty: true

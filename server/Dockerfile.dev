@@ -8,9 +8,6 @@ COPY package.json pnpm-lock.yaml* ./
 
 RUN pnpm install --frozen-lockfile
 
-# Note: Source code is mounted via volume, not copied
-# This allows real-time updates without rebuilding
-
 EXPOSE 3003
 
 CMD ["pnpm", "dev"]

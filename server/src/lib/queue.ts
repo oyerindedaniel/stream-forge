@@ -22,19 +22,6 @@ export const videoQueue = new Queue(VIDEO_PROCESSING_QUEUE, {
   },
 });
 
-export interface VideoJobData {
-  videoId: string;
-  sourceUrl: string;
-  priority?: "high" | "normal" | "low";
-}
-
-export async function addVideoJob(data: VideoJobData) {
-  return videoQueue.add("transcode", data, {
-    priority: data.priority === "high" ? 1 : data.priority === "low" ? 10 : 5,
-    jobId: data.videoId,
-  });
-}
-
 process.on("SIGTERM", async () => {
   await videoQueue.close();
 });

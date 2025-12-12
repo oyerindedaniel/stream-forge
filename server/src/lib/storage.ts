@@ -189,6 +189,37 @@ export const storage = {
       })
     );
   },
+
+  async downloadPartialFile(
+    key: string,
+    startByte: number,
+    endByte: number
+  ): Promise<Buffer> {
+    const command = new GetObjectCommand({
+      Bucket: S3_BUCKET_NAME,
+      Key: key,
+      Range: `bytes=${startByte}-${endByte}`,
+    });
+
+    const response = await s3.send(command);
+    if (!response.Body) {
+      throw new Error("No file body returned from S3");
+    }
+
+    const chunks: Uint8Array[] = [];
+    const stream = response.Body as any;
+
+    if (stream.transformToByteArray) {
+      // AWS SDK v3 stream
+      return Buffer.from(await stream.transformToByteArray());
+    } else {
+      // Node.js stream
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks);
+    }
+  },
 };
 
 export type StorageService = typeof storage;

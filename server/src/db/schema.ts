@@ -37,7 +37,13 @@ export const videos = pgTable(
 
     sourceUrl: text("source_url").notNull(),
     sourceSize: integer("source_size").notNull(),
-    sourceChecksum: text("source_checksum"),
+    partChecksums: jsonb("part_checksums").$type<
+      Array<{
+        partNumber: number;
+        checksum: string;
+        size: number;
+      }>
+    >(),
 
     manifestUrl: text("manifest_url"),
     initSegmentUrl: text("init_segment_url"),
