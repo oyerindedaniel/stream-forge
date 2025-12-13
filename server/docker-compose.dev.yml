@@ -59,7 +59,8 @@ services:
       - ./package.json:/app/package.json
       - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
       - ./tsconfig.json:/app/tsconfig.json
-      - ./tmp:/app/tmp
+    tmpfs:
+      - /app/tmp:size=2G
     command: sh -c "pnpm db:migrate && pnpm dev"
     stdin_open: true
     tty: true
@@ -92,7 +93,8 @@ services:
       - ./package.json:/app/package.json
       - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
       - ./tsconfig.json:/app/tsconfig.json
-      - ./tmp:/app/tmp
+    tmpfs:
+      - /app/tmp:size=2G
     stdin_open: true
     tty: true
 

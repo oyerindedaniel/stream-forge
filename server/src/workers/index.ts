@@ -13,8 +13,8 @@ import { storage } from "../lib/storage";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { S3Keys } from "../lib/s3-keys";
 import { VIDEO_QUALITIES } from "../lib/constants";
-import ffmpegPath from "ffmpeg-static";
-import ffprobePath from "ffprobe-static";
+// import ffmpegPath from "ffmpeg-static";
+// import ffprobePath from "ffprobe-static";
 import { validateS3PartChecksums } from "../lib/checksum";
 
 const execPromise = promisify(exec);
@@ -24,15 +24,18 @@ if (!fs.existsSync(TMP_DIR)) {
   fs.mkdirSync(TMP_DIR, { recursive: true });
 }
 
-if (!ffmpegPath) {
-  throw new Error("ffmpeg-static path not found");
-}
-if (!ffprobePath?.path) {
-  throw new Error("ffprobe-static path not found");
-}
+// if (!ffmpegPath) {
+//   throw new Error("ffmpeg-static path not found");
+// }
+// if (!ffprobePath?.path) {
+//   throw new Error("ffprobe-static path not found");
+// }
 
-const FFMPEG_PATH = ffmpegPath;
-const FFPROBE_PATH = ffprobePath.path;
+// const FFMPEG_PATH = ffmpegPath;
+// const FFPROBE_PATH = ffprobePath.path;
+
+const FFMPEG_PATH = "ffmpeg";
+const FFPROBE_PATH = "ffprobe";
 
 console.log("[Worker] Using FFmpeg:", FFMPEG_PATH);
 console.log("[Worker] Using FFprobe:", FFPROBE_PATH);
@@ -195,6 +198,17 @@ async function handleTranscodeJob(job: Job) {
     `[Worker] Processing video job ${job.id} for videoId: ${job.data.videoId}`
   );
   const { videoId, sourceUrl } = job.data;
+
+  const videoCheck = await db
+    .select()
+    .from(videos)
+    .where(eq(videos.id, videoId))
+    .limit(1);
+
+  if (!videoCheck || videoCheck.length === 0 || videoCheck[0].deletedAt) {
+    console.log(`[Worker] Video ${videoId} was deleted, skipping processing`);
+    return;
+  }
 
   const sourcePath = path.join(TMP_DIR, `${videoId}_source.mp4`);
   const outputDir = path.join(TMP_DIR, videoId);

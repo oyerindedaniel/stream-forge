@@ -4,6 +4,8 @@ import { videos } from "../../db/schema";
 import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import { storage } from "../../lib/storage";
 import { S3Keys } from "../../lib/s3-keys";
+import { videoQueue } from "../../lib/queue";
+import { MULTIPART_CHUNK_SIZE } from "../../lib/constants";
 
 export async function videoRoutes(fastify: FastifyInstance) {
   fastify.get("/", async (request, reply) => {
@@ -24,32 +26,6 @@ export async function videoRoutes(fastify: FastifyInstance) {
         createdAt: video.createdAt,
       })),
     };
-  });
-
-  fastify.get("/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const result = await db
-      .select()
-      .from(videos)
-      .limit(1)
-      .where(eq(videos.id, id));
-
-    if (!result || result.length === 0) {
-      return reply.status(404).send({ error: "Video not found" });
-    }
-
-    const video = result[0];
-
-    if (video.status === "ready" && video.manifestUrl) {
-      try {
-        const manifest = await storage.getFileAsJson(video.manifestUrl);
-        return { ...video, manifest };
-      } catch (error) {
-        console.error("Failed to fetch manifest:", error);
-      }
-    }
-
-    return video;
   });
 
   fastify.get("/:id/status", async (request, reply) => {
@@ -85,11 +61,30 @@ export async function videoRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: "Video not found" });
     }
 
-    if (video[0].sourceUrl) {
-      const s3Key = S3Keys.parseS3Url(video[0].sourceUrl, storage.bucketName);
+    const videoData = video[0];
 
-      if (await storage.fileExists(s3Key)) {
+    try {
+      const jobs = await videoQueue.getJobs(["waiting", "active", "delayed"]);
+      const videoJobs = jobs.filter((job) => job.data.videoId === id);
+
+      for (const job of videoJobs) {
+        await job.remove();
+        console.log(`[Delete] Cancelled job ${job.id} for video ${id}`);
+      }
+    } catch (error) {
+      console.error(`[Delete] Failed to cancel jobs for video ${id}:`, error);
+    }
+
+    if (videoData.sourceUrl) {
+      try {
+        const s3Key = S3Keys.parseS3Url(
+          videoData.sourceUrl,
+          storage.bucketName
+        );
         await storage.deleteFile(s3Key);
+        console.log(`[Delete] Deleted source file: ${s3Key}`);
+      } catch (error) {
+        console.error(`[Delete] Failed to delete source:`, error);
       }
     }
 
@@ -102,6 +97,81 @@ export async function videoRoutes(fastify: FastifyInstance) {
       })
       .where(eq(videos.id, id));
 
-    return { success: true };
+    console.log(`[Delete] Video ${id} marked as deleted`);
+
+    return { success: true, videoId: id };
+  });
+
+  fastify.post("/:id/retry", async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const video = await db
+      .select()
+      .from(videos)
+      .where(eq(videos.id, id))
+      .limit(1);
+
+    if (!video || video.length === 0) {
+      return reply.status(404).send({ error: "Video not found" });
+    }
+
+    const videoData = video[0];
+
+    if (videoData.status !== "failed") {
+      return reply.status(400).send({
+        error: "Can only retry failed videos",
+        currentStatus: videoData.status,
+      });
+    }
+
+    if ((videoData.processingAttempts || 0) >= 3) {
+      return reply.status(400).send({
+        error: "Maximum retry attempts reached",
+        attempts: videoData.processingAttempts,
+        maxAttempts: 3,
+      });
+    }
+
+    if (!videoData.sourceUrl) {
+      return reply.status(400).send({
+        error: "Source file not found",
+        message: "Cannot retry without source file",
+      });
+    }
+
+    console.log(`[Retry] Retrying failed video ${id}`);
+
+    await db
+      .update(videos)
+      .set({
+        status: "processing",
+        lastError: null,
+        processingAttempts: (videoData.processingAttempts || 0) + 1,
+        updatedAt: new Date(),
+      })
+      .where(eq(videos.id, id));
+
+    if (videoData.partChecksums && Array.isArray(videoData.partChecksums)) {
+      await videoQueue.add("validate-checksums", {
+        videoId: videoData.id,
+        sourceUrl: videoData.sourceUrl,
+        partChecksums: videoData.partChecksums,
+        chunkSize: MULTIPART_CHUNK_SIZE,
+      });
+      console.log(`[Retry] Queued checksum validation for ${id}`);
+    }
+
+    await videoQueue.add("transcode", {
+      videoId: videoData.id,
+      sourceUrl: videoData.sourceUrl,
+    });
+
+    console.log(`[Retry] Queued transcode for ${id}`);
+
+    return {
+      videoId: videoData.id,
+      status: "processing",
+      attempt: (videoData.processingAttempts || 0) + 1,
+    };
   });
 }

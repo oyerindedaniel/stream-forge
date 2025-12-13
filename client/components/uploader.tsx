@@ -19,7 +19,11 @@ export function Uploader() {
       const restored: Record<string, UploadSession> = {};
 
       Object.values(sessions).forEach((session) => {
-        if (session.status === "uploading" || session.status === "paused") {
+        if (
+          session.status === "uploading" ||
+          session.status === "paused" ||
+          session.status === "error"
+        ) {
           restored[session.uploadId] = {
             ...session,
             status: "paused",
@@ -493,6 +497,7 @@ export function Uploader() {
     const processResume = async (file: File) => {
       const uploadingSession: UploadSession = {
         ...uploadSessionsRef.current[tempId],
+        error: "",
         status: "uploading",
       };
 
@@ -581,7 +586,21 @@ export function Uploader() {
                 `[Resume] Sent ${uploadedParts.length} part checksums`
               );
             } catch (error) {
-              console.warn("Failed to send part checksums on resume:", error);
+              const errorSession: UploadSession = {
+                ...uploadSessionsRef.current[tempId],
+                status: "error",
+                error: "Failed to upload checksums. Please resume to retry.",
+              };
+
+              uploadSessionsRef.current[tempId] = errorSession;
+
+              setUploadSessions((prev) => {
+                const updated = { ...prev, [tempId]: errorSession };
+                saveSessions(updated);
+                return updated;
+              });
+
+              return;
             }
           }
         } else {
@@ -775,6 +794,14 @@ export function Uploader() {
                   className="text-xs px-2 py-1 bg-blue-500 text-white hover:bg-blue-600 rounded"
                 >
                   Resume
+                </button>
+              )}
+              {session.status === "error" && (
+                <button
+                  onClick={() => resumeUpload(id)}
+                  className="text-xs px-2 py-1 bg-yellow-500 text-white hover:bg-yellow-600 rounded"
+                >
+                  Retry
                 </button>
               )}
               {(session.status === "uploading" ||

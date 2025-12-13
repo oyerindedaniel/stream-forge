@@ -21,7 +21,6 @@ import {
   isS3Configured,
   CDN_URL,
 } from "./constants";
-import { get } from "https";
 
 const s3 = new S3Client({
   region: AWS_REGION,

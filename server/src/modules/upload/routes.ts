@@ -18,7 +18,6 @@ import {
   MAX_FILE_SIZE,
   MAX_MULTIPART_PARTS,
 } from "../../lib/constants";
-import { validateS3PartChecksums } from "../../lib/checksum";
 
 export async function uploadRoutes(fastify: FastifyInstance) {
   fastify.post("/", async (request, reply) => {
@@ -140,6 +139,8 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       }>;
     };
 
+    console.log("---------------------------------------", { parts });
+
     if (!Array.isArray(parts) || parts.length === 0) {
       return reply.status(400).send({ error: "Parts array required" });
     }
@@ -176,6 +177,8 @@ export async function uploadRoutes(fastify: FastifyInstance) {
     const mergedChecksums = Array.from(checksumMap.values()).sort(
       (a, b) => a.partNumber - b.partNumber
     );
+
+    console.log({ mergedChecksums });
 
     await db
       .update(videos)
@@ -384,78 +387,5 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       .where(eq(videos.id, uploadId));
 
     return { success: true };
-  });
-
-  fastify.post("/:uploadId/retry", async (request, reply) => {
-    const { uploadId } = request.params as { uploadId: string };
-
-    const video = await db
-      .select()
-      .from(videos)
-      .where(eq(videos.id, uploadId))
-      .limit(1);
-
-    if (!video || video.length === 0) {
-      return reply.status(404).send({ error: "Video not found" });
-    }
-
-    const videoData = video[0];
-
-    if (videoData.status !== "failed") {
-      return reply.status(400).send({
-        error: "Can only retry failed videos",
-        currentStatus: videoData.status,
-      });
-    }
-
-    if ((videoData.processingAttempts || 0) >= 3) {
-      return reply.status(400).send({
-        error: "Maximum retry attempts reached",
-        attempts: videoData.processingAttempts,
-        maxAttempts: 3,
-      });
-    }
-
-    if (!videoData.sourceUrl) {
-      return reply.status(400).send({
-        error: "Source file not found",
-        message: "Cannot retry without source file",
-      });
-    }
-
-    console.log(`[Retry] Retrying failed video ${uploadId}`);
-
-    await db
-      .update(videos)
-      .set({
-        status: "processing",
-        lastError: null,
-        processingAttempts: (videoData.processingAttempts || 0) + 1,
-        updatedAt: new Date(),
-      })
-      .where(eq(videos.id, uploadId));
-
-    if (videoData.partChecksums && Array.isArray(videoData.partChecksums)) {
-      await videoQueue.add("validate-checksums", {
-        videoId: videoData.id,
-        sourceUrl: videoData.sourceUrl,
-        partChecksums: videoData.partChecksums,
-        chunkSize: MULTIPART_CHUNK_SIZE,
-      });
-      console.log(`[Retry] Queued checksum validation for ${uploadId}`);
-    }
-
-    await videoQueue.add("transcode", {
-      videoId: videoData.id,
-      sourceUrl: videoData.sourceUrl,
-    });
-
-    console.log(`[Retry] Queued transcode for ${uploadId}`);
-
-    return {
-      videoId: videoData.id,
-      status: "processing",
-      attempt: (videoData.processingAttempts || 0) + 1,
-    };
   });
 }

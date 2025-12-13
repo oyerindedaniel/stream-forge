@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "StreamForge",
+  title: "Streamtube",
   description: "Some Random shit. Wanted to try it out",
 };
 

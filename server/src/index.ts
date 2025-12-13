@@ -21,7 +21,7 @@ const fastify = Fastify({
 fastify.register(cors, {
   origin: CORS_ORIGIN,
   credentials: true,
-  methods: ["GET", "POST", "DELETE", "PUT", "OPTIONS"],
+  methods: ["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
 });
 
 fastify.register(fastifyStatic, {

@@ -30,7 +30,7 @@ export function createChildLogger(module: string) {
 
 class MetricsCollector {
   private metrics: Map<string, number[]> = new Map();
-  private readonly maxSamples = 200;
+  private readonly maxSamples = 1200;
 
   record(name: string, value: number) {
     if (!this.metrics.has(name)) {

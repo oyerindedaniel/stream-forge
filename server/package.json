@@ -1,12 +1,13 @@
 {
   "name": "server",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.1.0",
+  "private": true,
+  "description": "streamtube server",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon -L src/index.ts",
-    "dev:worker": "nodemon -L src/worker-entry.ts",
+    "dev": "nodemon -L --exec tsx src/index.ts",
+    "dev:worker": "nodemon -L --exec tsx src/worker-entry.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "start:worker": "node dist/worker-entry.js",
@@ -52,6 +53,7 @@
     "autocannon": "^8.0.0",
     "clinic": "^13.0.0",
     "drizzle-kit": "^0.31.8",
+    "nodemon": "^3.1.11",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

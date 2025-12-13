@@ -1,5 +1,7 @@
 FROM node:24-alpine
 
+RUN apk add --no-cache ffmpeg
+
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
