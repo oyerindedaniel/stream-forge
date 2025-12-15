@@ -7,7 +7,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon -L --exec tsx src/index.ts",
-    "dev:worker": "nodemon -L --exec tsx src/worker-entry.ts",
+    "dev:worker": "nodemon -L --ignore tmp/ --ignore dist/ --exec tsx src/worker-entry.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "start:worker": "node dist/worker-entry.js",

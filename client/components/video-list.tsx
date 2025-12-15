@@ -4,7 +4,8 @@ import Link from "next/link";
 import { API_URL } from "@/app/lib/constants";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoaderIcon } from "@/icons/loader";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSocket } from "@/app/contexts/socket-context";
 
 interface Video {
   id: string;
@@ -48,18 +49,14 @@ async function retryVideo(videoId: string): Promise<void> {
 
 export function VideoList() {
   const queryClient = useQueryClient();
+  const { subscribeToVideo, unsubscribeFromVideo, onVideoStatus } = useSocket();
+
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
 
-  const { data, isPending } = useQuery({
+  const { data, isPending, refetch } = useQuery({
     queryKey: ["videos"],
     queryFn: fetchVideos,
-    refetchInterval: (query) => {
-      if (query.state.status === "pending" || query.state.status === "error") {
-        return false;
-      }
-      return 7000;
-    },
   });
 
   const deleteMutation = useMutation({
@@ -102,6 +99,33 @@ export function VideoList() {
     setRetryingId(videoId);
     retryMutation.mutate(videoId);
   };
+
+  useEffect(() => {
+    if (!data?.videos) return;
+
+    data.videos.forEach((video) => {
+      subscribeToVideo(video.id);
+    });
+
+    const cleanup = onVideoStatus((event) => {
+      console.log("[Video List] Status update:", event);
+
+      refetch();
+    });
+
+    return () => {
+      data.videos.forEach((video) => {
+        unsubscribeFromVideo(video.id);
+      });
+      cleanup();
+    };
+  }, [
+    data?.videos,
+    subscribeToVideo,
+    unsubscribeFromVideo,
+    onVideoStatus,
+    refetch,
+  ]);
 
   return (
     <div className="space-y-4">

@@ -3,7 +3,7 @@ import { VIDEO_PROCESSING_QUEUE } from "../lib/queue";
 import { redisPrimary } from "../lib/redis";
 import { videos, segments } from "../db/schema";
 import { db } from "../db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { spawn } from "child_process";
 import { promisify } from "util";
 import { exec } from "child_process";
@@ -66,6 +66,111 @@ async function probeVideo(filePath: string): Promise<ProbeData> {
       }`
     );
   }
+}
+
+async function transcodeSegmentsMultiLadder(
+  inputPath: string,
+  outputDir: string,
+  qualities: Array<{
+    name: string;
+    height: number;
+    bitrate: string;
+    audioBitrate: string;
+  }>,
+  onProgress?: (progress: string) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const filterParts: string[] = [];
+    const mapArgs: string[] = [];
+
+    filterParts.push(
+      `[0:v]split=${qualities.length}${qualities
+        .map((_, i) => `[v${i}]`)
+        .join("")}`
+    );
+
+    qualities.forEach((q, i) => {
+      filterParts.push(`[v${i}]scale=-2:${q.height}[v${q.name}]`);
+    });
+
+    qualities.forEach((q, i) => {
+      const qualityDir = path.join(outputDir, q.name);
+      const segmentPath = path.join(qualityDir, "seg_%d.m4s");
+
+      mapArgs.push(
+        "-map",
+        `[v${q.name}]`,
+        "-map",
+        "0:a:0",
+
+        `-c:v:${i}`,
+        "libx264",
+        `-b:v:${i}`,
+        q.bitrate,
+        `-preset`,
+        "fast",
+        `-crf`,
+        "23",
+
+        `-g`,
+        "48",
+        `-keyint_min`,
+        "48",
+        `-sc_threshold`,
+        "0",
+
+        `-c:a:${i}`,
+        "aac",
+        `-b:a:${i}`,
+        q.audioBitrate,
+
+        "-f",
+        "segment",
+        "-segment_time",
+        "4",
+        "-segment_format",
+        "mp4",
+        "-movflags",
+        "+frag_keyframe+empty_moov+default_base_moof",
+        "-reset_timestamps",
+        "1",
+        "-segment_start_number",
+        "1",
+        segmentPath
+      );
+    });
+
+    const args = [
+      "-y",
+      "-i",
+      inputPath,
+      "-filter_complex",
+      filterParts.join(";"),
+      ...mapArgs,
+    ];
+
+    const ffmpegProcess = spawn(FFMPEG_PATH, args);
+
+    let stderr = "";
+
+    ffmpegProcess.stderr.on("data", (data) => {
+      const output = data.toString();
+      stderr += output;
+      if (onProgress && output.includes("time=")) {
+        onProgress(output);
+      }
+    });
+
+    ffmpegProcess.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`FFmpeg exited with code ${code}\n${stderr}`));
+      }
+    });
+
+    ffmpegProcess.on("error", reject);
+  });
 }
 
 async function transcodeVideo(
@@ -287,8 +392,7 @@ async function handleTranscodeJob(job: Job) {
         fs.mkdirSync(qualityDir, { recursive: true });
       }
 
-      //TODO: fix duplicate transcode currently having a rename issue
-
+      // TODO: fix duplicate transcode currently having a rename permission issues
       const initPath = path.join(qualityDir, "init.mp4");
       await transcodeVideo(sourcePath, initPath, [
         "-y",
@@ -318,52 +422,12 @@ async function handleTranscodeJob(job: Job) {
         "mp4",
       ]);
 
-      await transcodeVideo(
+      await transcodeSegmentsMultiLadder(
         sourcePath,
-        path.join(qualityDir, "seg_%d.m4s"),
-        [
-          "-y",
-          "-map",
-          "0:v:0",
-          "-map",
-          "0:a:0",
-          "-vf",
-          `scale=-2:${quality.height}`,
-          "-c:v",
-          "libx264",
-          "-preset",
-          "fast",
-          "-crf",
-          "23",
-          "-b:v",
-          quality.bitrate,
-          "-c:a",
-          "aac",
-          "-b:a",
-          quality.audioBitrate,
-          "-g",
-          "48",
-          "-keyint_min",
-          "48",
-          "-sc_threshold",
-          "0",
-          "-f",
-          "segment",
-          "-segment_time",
-          "4",
-          "-segment_format",
-          "mp4",
-          "-movflags",
-          "+frag_keyframe+empty_moov+default_base_moof",
-          "-reset_timestamps",
-          "1",
-          "-segment_start_number",
-          "1",
-        ],
+        outputDir,
+        applicableQualities,
         (progress) => {
-          if (progress.includes("time=")) {
-            console.log(`[Worker] ${quality.name} progress:`, progress.trim());
-          }
+          console.log("[Worker] segment progress:", progress.trim());
         }
       );
 
@@ -436,6 +500,9 @@ async function handleTranscodeJob(job: Job) {
     const thumbFiles = fs.readdirSync(path.join(outputDir, "thumbnails"));
     allFiles.push(...thumbFiles.map((f) => `thumbnails/${f}`));
 
+    console.log(`[Worker] Total files to upload: ${allFiles.length}`);
+
+    let uploadedCount = 0;
     for (const file of allFiles) {
       const filePath = path.join(outputDir, file);
       if (fs.existsSync(filePath)) {
@@ -476,10 +543,24 @@ async function handleTranscodeJob(job: Job) {
           ? "image/jpeg"
           : "video/mp4";
 
-        await storage.uploadBuffer(s3Key, fileContent, contentType);
+        try {
+          await storage.uploadBuffer(s3Key, fileContent, contentType);
+          uploadedCount++;
+          if (uploadedCount % 50 === 0) {
+            console.log(
+              `[Worker] Uploaded ${uploadedCount}/${allFiles.length} files`
+            );
+          }
+        } catch (error) {
+          console.error(`[Worker] Failed to upload ${file}:`, error);
+          throw error;
+        }
       }
     }
 
+    console.log(`[Worker] All ${uploadedCount} files uploaded successfully`);
+
+    console.log("[Worker] Inserting segments into database...");
     const allSegments: Array<{
       videoId: string;
       idx: number;
@@ -507,23 +588,47 @@ async function handleTranscodeJob(job: Job) {
     });
 
     if (allSegments.length > 0) {
-      await db.insert(segments).values(allSegments);
+      try {
+        console.log(`[Worker] Inserting ${allSegments.length} segments...`);
+        await db
+          .insert(segments)
+          .values(allSegments)
+          .onConflictDoUpdate({
+            target: [segments.videoId, segments.idx],
+            set: {
+              url: sql`excluded.url`,
+              start: sql`excluded.start`,
+              duration: sql`excluded.duration`,
+            },
+          });
+        console.log(`[Worker] Segments inserted successfully`);
+      } catch (error) {
+        console.error(`[Worker] Failed to insert segments:`, error);
+        throw error;
+      }
     }
 
-    await db
-      .update(videos)
-      .set({
-        status: "ready",
-        manifestUrl: S3Keys.manifest(videoId),
-        width: sourceWidth,
-        height: sourceHeight,
-        duration: duration,
-        thumbnails: {
-          pattern: `processed/${videoId}/thumbnails/thumb_%03d.jpg`,
-          interval: 4,
-        },
-      })
-      .where(eq(videos.id, videoId));
+    console.log("[Worker] Updating video status to ready...");
+    try {
+      await db
+        .update(videos)
+        .set({
+          status: "ready",
+          manifestUrl: S3Keys.manifest(videoId),
+          width: sourceWidth,
+          height: sourceHeight,
+          duration: duration,
+          thumbnails: {
+            pattern: `processed/${videoId}/thumbnails/thumb_%03d.jpg`,
+            interval: 4,
+          },
+        })
+        .where(eq(videos.id, videoId));
+      console.log(`[Worker] Video status updated successfully`);
+    } catch (error) {
+      console.error(`[Worker] Failed to update video status:`, error);
+      throw error;
+    }
 
     console.log("[Worker] Job finished successfully");
 
